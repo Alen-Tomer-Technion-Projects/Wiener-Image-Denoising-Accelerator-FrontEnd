@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+sim.out
+*.vcd
+*.fst
+.DS_Store

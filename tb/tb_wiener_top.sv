@@ -1,3 +1,24 @@
+// File      : tb_wiener_top.sv
+// Module    : tb_wiener_top
+// Project   : Wiener Image Denoising Accelerator (front end RTL)
+//
+// Purpose
+//   Full image testbench. Loads a clean and a noisy 512 x 512 image (HEX),
+//   loads the noise variance through the serial config port, streams the
+//   noisy image through wiener_top twice (5x5 mode, then 3x3 mode), writes
+//   the output pixels to text files and prints the SNR of each run.
+//
+// Plusargs
+//   +NOISE_VAR=<real>   Noise variance (required), converted to Q16.8
+//   +CLEAN_HEX=<path>   Default clean_image.hex
+//   +NOISY_HEX=<path>   Default noisy_image.hex
+//   +OUT_5X5=<path>     Default output_pixels_5x5.txt
+//   +OUT_3X3=<path>     Default output_pixels_3x3.txt
+//
+// Note
+//   The capture stops after IMG_W * IMG_H pixels per run because out_valid
+//   stays high after the end of a frame (see Known issues in README.md).
+
 module tb_wiener_top;
     localparam integer IMG_W = 512;
     localparam integer IMG_H = 512;
@@ -13,18 +34,17 @@ module tb_wiener_top;
     logic [23:0] noise_var_q16_8;
     real noise_var_real;
 
-    // Test signals
-    logic test_in_inv, test_in_ff_d;
+    // Debug outputs (FSM states and pipeline valids)
+    wire [2:0] col_state_e, row_state_e;
+    wire line_buffer_valid_out, window_valid_out, stats_valid_out;
 
     // DUT output signals
     logic out_valid;
     logic [7:0] out_pixel;
     logic test_inv_out, test_ff_q;
 
-    // New: mode control for 3x3 vs 5x5
-    // Assumption: you added this input to wiener_top
-    // mode_3x3 = 0 means normal 5x5 behavior
-    // mode_3x3 = 1 means stats_calc uses center 3x3 (while rest of pipeline stays 5x5)
+    // Statistics mode: 0 = 5x5 window statistics, 1 = centre 3x3 statistics
+    // (the window and border handling stay 5x5 in both modes)
     logic mode_3x3;
 
     // Image buffers (to hold test images)
@@ -39,6 +59,10 @@ module tb_wiener_top;
     // Two output files so we save 5x5 and 3x3 results separately
     integer out_file_5x5;
     integer out_file_3x3;
+
+    // Defaults are relative to the project root. Plusargs allow other run folders.
+    string clean_hex_path, noisy_hex_path;
+    string output_5x5_path, output_3x3_path;
 
     integer i, in_index, out_index, k;
 
@@ -55,7 +79,7 @@ module tb_wiener_top;
     real snr_rest_5x5_db;
     real snr_rest_3x3_db;
 
-    // New: run control so the output capture block knows when a run is active
+    // run control so the output capture block knows when a run is active
     logic run_active;
 
     // Clock generation: 100 MHz clock (10ns period)
@@ -72,10 +96,14 @@ module tb_wiener_top;
         .in_valid(in_valid), .in_pixel(in_pixel),
         .cfg_en(cfg_en), .cfg_data(cfg_data),
 
-        // New port assumed in DUT
         .mode_3x3(mode_3x3),
 
-        .test_in_inv(test_in_inv), .test_in_ff_d(test_in_ff_d),
+        .col_state_e(col_state_e), .row_state_e(row_state_e),
+        .line_buffer_valid_out(line_buffer_valid_out),
+        .window_valid_out(window_valid_out),
+        .stats_valid_out(stats_valid_out),
+        .scan_en(1'b0), .scan_in1(1'b0), .scan_in2(1'b0),
+        .scan_out1(), .scan_out2(),
         .out_valid(out_valid), .out_pixel(out_pixel),
         .test_inv_out(test_inv_out), .test_ff_q(test_ff_q)
     );
@@ -87,36 +115,43 @@ module tb_wiener_top;
         in_pixel = 0;
         cfg_en = 0;
         cfg_data = 0;
-        test_in_inv = 0;
-        test_in_ff_d = 0;
 
-        // New: default run control
+        // Run control
         run_active = 0;
 
-        // New: start in 5x5 mode for the first run
+        // Start in 5x5 mode for the first run
         mode_3x3 = 0;
 
         // 1) Load image files into buffers
-        $readmemh("clean_image.hex", clean_buffer);
-        $readmemh("noisy_image.hex", noisy_buffer);
+        if (!$value$plusargs("CLEAN_HEX=%s", clean_hex_path))
+            clean_hex_path = "clean_image.hex";
+        if (!$value$plusargs("NOISY_HEX=%s", noisy_hex_path))
+            noisy_hex_path = "noisy_image.hex";
+        if (!$value$plusargs("OUT_5X5=%s", output_5x5_path))
+            output_5x5_path = "output_pixels_5x5.txt";
+        if (!$value$plusargs("OUT_3X3=%s", output_3x3_path))
+            output_3x3_path = "output_pixels_3x3.txt";
+
+        $readmemh(clean_hex_path, clean_buffer);
+        $readmemh(noisy_hex_path, noisy_buffer);
         if (clean_buffer[0] === 8'bx || noisy_buffer[0] === 8'bx) begin
             $display("ERROR: Hex files not found!");
             $finish;
         end else begin
-            $display("SUCCESS: Loaded clean_img.hex and noisy_img.hex");
+            $display("SUCCESS: Loaded %s and %s", clean_hex_path, noisy_hex_path);
         end
 
         // Open output files
         // We keep two files open, and write based on mode_3x3 at the time of output
-        out_file_5x5 = $fopen("output_pixels_5x5.txt", "w");
+        out_file_5x5 = $fopen(output_5x5_path, "w");
         if (out_file_5x5 == 0) begin
-            $display("Error opening output_pixels_5x5.txt");
+            $display("Error opening %s", output_5x5_path);
             $finish;
         end
 
-        out_file_3x3 = $fopen("output_pixels_3x3.txt", "w");
+        out_file_3x3 = $fopen(output_3x3_path, "w");
         if (out_file_3x3 == 0) begin
-            $display("Error opening output_pixels_3x3.txt");
+            $display("Error opening %s", output_3x3_path);
             $finish;
         end
 
@@ -175,7 +210,7 @@ module tb_wiener_top;
         cfg_data = 0;
         @(negedge clk);
 
-        // New: reset output counters and error accumulator for this run
+        // reset output counters and error accumulator for this run
         out_index = 0;
         den_restored = 0;
         run_active = 1;
@@ -237,7 +272,7 @@ module tb_wiener_top;
         cfg_data = 0;
         @(negedge clk);
 
-        // New: reset output counters and error accumulator for this run
+        // reset output counters and error accumulator for this run
         out_index = 0;
         den_restored = 0;
         run_active = 1;
@@ -308,9 +343,9 @@ module tb_wiener_top;
     
     //  waveforms (for viewing in a waveform viewer, optional)
     
-    initial begin
-      $dumpfile("wave.vcd");
-      $dumpvars(0, tb_wiener_top);
-    end
+    //initial begin
+    //  $dumpfile("wave.fst");
+    //  $dumpvars(0, tb_wiener_top);
+    //end
     
 endmodule
