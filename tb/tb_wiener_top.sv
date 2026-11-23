@@ -16,8 +16,8 @@
 //   +OUT_3X3=<path>     Default output_pixels_3x3.txt
 //
 // Note
-//   The capture stops after IMG_W * IMG_H pixels per run because out_valid
-//   stays high after the end of a frame (see Known issues in README.md).
+//   This testbench reports SNR only. For a bit exact check of every output
+//   pixel use the golden model regression: python3 tests/run_golden.py
 
 module tb_wiener_top;
     localparam integer IMG_W = 512;

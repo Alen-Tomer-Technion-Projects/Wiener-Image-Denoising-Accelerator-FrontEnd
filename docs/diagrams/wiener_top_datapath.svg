@@ -61,7 +61,7 @@
 <text x="628" y="568" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="12" font-weight="normal" fill="#1D1D1F" text-anchor="start">row_m2 .. row_p2  5 x [7:0]</text>
 <rect x="450" y="596" width="340" height="84" rx="10" fill="#FFFFFF" stroke="#D2D2D7" stroke-width="1" filter="url(#shadow)"/>
 <text x="464" y="615" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#AEAEB2" text-anchor="start" letter-spacing="0.8">DATAPATH</text>
-<text x="776" y="615" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#6E6E73" text-anchor="end">en: v2_valid_r</text>
+<text x="776" y="615" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#6E6E73" text-anchor="end">en: shift_en</text>
 <text x="464" y="634" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1D1D1F" text-anchor="start">Section 7: 5x5 window</text>
 <text x="464" y="653" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">u_window : window5x5</text>
 <text x="464" y="670" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">shift left, new column at index 4</text>
@@ -72,8 +72,8 @@
 <text x="776" y="765" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#6E6E73" text-anchor="end">1 clk</text>
 <text x="464" y="784" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1D1D1F" text-anchor="start">Section 8: Horizontal mux</text>
 <text x="464" y="803" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">u_col_m2, u_col_m1, u_col_p1, u_col_p2</text>
-<text x="464" y="820" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">col_reflect_block x4 (en: v2_valid_r)</text>
-<text x="464" y="837" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">centre column: col_0_d register</text>
+<text x="464" y="820" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">col_reflect_block x4 (en: shift_en)</text>
+<text x="464" y="837" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">centre column: col_0_d (en: shift_en)</text>
 <path d="M 620 850 L 620 916" fill="none" stroke="#48484A" stroke-width="1.25" marker-end="url(#arrow)"/>
 <text x="628" y="872" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="12" font-weight="normal" fill="#1D1D1F" text-anchor="start">col_m2, col_m1, col_0_d,</text>
 <text x="628" y="888" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="12" font-weight="normal" fill="#1D1D1F" text-anchor="start">col_p1, col_p2 (25 x [7:0])</text>
@@ -111,7 +111,8 @@
 <text x="104" y="484" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1D1D1F" text-anchor="start">Section 5: Border FSMs</text>
 <text x="104" y="503" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">col FSM: L0 L1 MID R1 R0</text>
 <text x="104" y="520" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">row FSM: T0 T1 MID B1 B0</text>
-<text x="104" y="537" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">advance on v2_valid_r</text>
+<text x="104" y="537" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">row flags from next state</text>
+<text x="104" y="554" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">flush: 3 shifts after a frame</text>
 <path d="M 340 488 L 450 488" fill="none" stroke="#48484A" stroke-width="1.25" marker-end="url(#arrow)"/>
 <text x="346" y="480" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="normal" fill="#1D1D1F" text-anchor="start">top0, top1,</text>
 <text x="346" y="504" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="normal" fill="#1D1D1F" text-anchor="start">bottom1/0</text>
@@ -125,7 +126,7 @@
 <rect x="90" y="746" width="250" height="84" rx="10" fill="#FFFFFF" stroke="#D2D2D7" stroke-width="1" filter="url(#shadow)"/>
 <text x="104" y="765" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#AEAEB2" text-anchor="start" letter-spacing="0.8">CONTROL</text>
 <text x="104" y="784" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1D1D1F" text-anchor="start">Edge flag delay</text>
-<text x="104" y="803" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">3 stages, en: v2_valid_r</text>
+<text x="104" y="803" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">3 stages, en: shift_en</text>
 <text x="104" y="820" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">decode to sel_m2 .. sel_p2</text>
 <path d="M 340 788 L 450 788" fill="none" stroke="#48484A" stroke-width="1.25" marker-end="url(#arrow)"/>
 <text x="346" y="780" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="normal" fill="#1D1D1F" text-anchor="start">sel_m2, sel_m1,</text>
@@ -145,11 +146,9 @@
 <path d="M 790 366 L 880 366" fill="none" stroke="#AEAEB2" stroke-width="1.25" stroke-dasharray="4 3"/>
 <rect x="880" y="596" width="250" height="84" rx="10" fill="#FFFFFF" stroke="#D2D2D7" stroke-width="1" filter="url(#shadow)"/>
 <text x="894" y="615" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#AEAEB2" text-anchor="start" letter-spacing="0.8">CONTROL</text>
-<text x="894" y="634" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1D1D1F" text-anchor="start">Window valid pipe</text>
-<text x="894" y="653" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">win_shift, 3 stages</text>
-<text x="894" y="670" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">en: v2_valid_r</text>
-<path d="M 790 620 L 880 620" fill="none" stroke="#48484A" stroke-width="1.25" marker-end="url(#arrow)"/>
-<text x="796" y="612" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="normal" fill="#1D1D1F" text-anchor="start">win_shift</text>
+<text x="894" y="634" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1D1D1F" text-anchor="start">Window valid strobe</text>
+<text x="894" y="653" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">v2_valid_r per shift (real / dummy)</text>
+<text x="894" y="670" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#6E6E73" text-anchor="start">3 stages, en: shift_en</text>
 <rect x="880" y="520" width="250" height="42" rx="7" fill="#FFFFFF" stroke="#AEAEB2" stroke-width="1" stroke-dasharray="3 3"/>
 <text x="890" y="538" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="normal" fill="#1D1D1F" text-anchor="start">window_valid_out</text>
 <text x="890" y="554" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="normal" fill="#6E6E73" text-anchor="start">  = win_valid_aligned</text>

@@ -8,7 +8,15 @@ This page documents the front end RTL in [`rtl/`](../rtl): the top level datapat
 
 Pixels enter in raster order, one per clock. Four line buffers turn the stream into five vertically aligned rows, with v2 as the centre row. The vertical mux mirrors rows that fall above or below the image. The 5x5 window shifts in one column per valid cycle. The horizontal mux mirrors columns that fall left or right of the image. The statistics block computes the local mean and variance (5x5 or centre 3x3). The Wiener core turns those into a gain and produces the filtered pixel.
 
-Two small state machines track where the window centre is. The column FSM steps once per window shift (`L0, L1, MID, R1, R0`). The row FSM steps once per row (`T0, T1, MID, B1, B0`). Their states drive the vertical mux directly. The column flags go through a 3 stage delay before they drive the horizontal mux, so they line up with the pixel in the window centre.
+Two small state machines track where the window centre is. The column FSM steps once per real window shift (`L0, L1, MID, R1, R0`). The row FSM steps once per row (`T0, T1, MID, B1, B0`). The vertical mux works on the pixel at the line buffer output one clock before that pixel is shifted, so it takes its row flags from the FSM's next state. The column flags go through a 3 stage delay before they drive the horizontal mux, so they line up with the pixel in the window centre.
+
+## Window shift control and valid
+
+`shift_en` moves the window, the column edge flag delay and the horizontal mux registers. It is high when a real pixel is shifted in (`v2_valid_r`) or during a flush shift.
+
+The window centre trails the newest column by two columns and the horizontal mux adds one more shift, so the last pixel of a frame needs 3 more shifts before it is processed. When the next frame follows back to back, its first pixels provide them. Otherwise `flush_shift` inserts up to 3 dummy shifts while no real pixel arrives.
+
+Every shift also records whether its column is real or dummy (`col_real_pipe`). The flag from three shifts back becomes `win_valid_aligned`, a one clock strobe per real centre pixel. It drives the statistics block, so `out_valid` is high exactly once per output pixel and every frame produces exactly IMG_WIDTH x IMG_HEIGHT pixels.
 
 Section numbers in the diagram match the `Section N` comments in [`rtl/wiener_top.sv`](../rtl/wiener_top.sv).
 
@@ -19,8 +27,8 @@ Section numbers in the diagram match the `Section N` comments in [`rtl/wiener_to
 | Input registers | `wiener_top` section 1 | 1 clk | always |
 | Line buffers (centre row) | `u_lb0`, `u_lb1` | 2 x IMG_WIDTH clk | always (shift every clock) |
 | Vertical mux | `u_vert_mux` | 1 clk | always |
-| 5x5 window | `u_window` | 1 shift | `v2_valid_r` |
-| Horizontal mux | `u_col_*`, `col_0_d` | 1 clk | `v2_valid_r` (`col_0_d` always) |
+| 5x5 window | `u_window` | 1 shift | `shift_en` |
+| Horizontal mux | `u_col_*`, `col_0_d` | 1 clk | `shift_en` |
 | Statistics | `u_stats` | 2 clk | always |
 | Wiener core | `u_wiener_core` | 1 clk | always |
 | Output registers | `wiener_top` section 12 | 1 clk | always |
@@ -50,10 +58,9 @@ This is not the same as `scipy.ndimage` `mode="reflect"` used by the Python refe
 
 ## Interface rules
 
-1. Stream a whole frame with `in_valid` high on every clock. The line buffers shift on every clock, so an idle cycle inside a frame misaligns the rows.
+1. Stream a whole frame with `in_valid` high on every clock. The line buffers shift on every clock, so an idle cycle inside a frame misaligns the rows. Idle cycles between frames are fine, and frames can also follow back to back.
 2. Keep `mode_3x3` constant during a frame. It is not registered and is used in two pipeline stages.
 3. Load the noise variance before the frame starts.
-4. Take exactly IMG_WIDTH x IMG_HEIGHT pixels from the output. `out_valid` stays high after the frame ends (see [Known issues](../README.md#known-issues)).
 
 ## Block I/O
 
@@ -74,8 +81,8 @@ This is not the same as `scipy.ndimage` `mode="reflect"` used by the Python refe
 | `out_pixel` | out | PIXEL_W | Filtered pixel |
 | `col_state_e` | out | 3 | Column FSM state: 0 L0, 1 L1, 2 MID, 3 R1, 4 R0 |
 | `row_state_e` | out | 3 | Row FSM state: 0 T0, 1 T1, 2 MID, 3 B1, 4 B0 |
-| `line_buffer_valid_out` | out | 1 | `v2_valid_r`, the window shift strobe |
-| `window_valid_out` | out | 1 | `win_valid_aligned`, valid into the statistics block |
+| `line_buffer_valid_out` | out | 1 | `v2_valid_r`, a real pixel is shifted into the window |
+| `window_valid_out` | out | 1 | `win_valid_aligned`, one clock strobe per window into the statistics block |
 | `stats_valid_out` | out | 1 | `stats_valid`, valid into the Wiener core |
 | `test_inv_out` | out | 1 | Inverted `cfg_data`, 3 clocks after the pin |
 | `test_ff_q` | out | 1 | `cfg_data`, 3 clocks after the pin |
@@ -135,7 +142,7 @@ Selects the five pixels of the new window column and handles the top and bottom 
 
 ![window5x5 I/O](diagrams/window5x5_io.svg)
 
-A 5x5 register array, `win[row][col]`. When `in_valid` is high every row shifts one column left and the new pixel enters at column 4. The centre pixel is `win[2][2]`. `win_shift` goes high on the first shift and stays high.
+A 5x5 register array, `win[row][col]`. When `in_valid` is high (`shift_en` in the top level) every row shifts one column left and the new pixel enters at column 4. The centre pixel is `win[2][2]`. `win_shift` goes high on the first shift and stays high. The top level leaves it unconnected and tracks validity per column instead.
 
 | Port | Dir | Width | Description |
 |---|---|---|---|
@@ -155,7 +162,7 @@ A 5 wide 2:1 mux plus an enabled register. It chooses between a window column an
 |---|---|---|---|
 | `clk`, `rst_n` | in | 1 | Clock and asynchronous active low reset |
 | `sel_reflect` | in | 1 | 1 = mirrored column, 0 = normal column |
-| `en` | in | 1 | Register enable (`v2_valid_r`) |
+| `en` | in | 1 | Register enable (`shift_en`) |
 | `normal` | in | 5 x DW | Normal column, index 0 = top |
 | `reflect` | in | 5 x DW | Mirrored column, index 0 = top |
 | `out_col` | out | 5 x DW | Registered selected column |

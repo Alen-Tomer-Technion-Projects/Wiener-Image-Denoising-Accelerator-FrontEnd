@@ -9,7 +9,7 @@ A hardware accelerator that removes Gaussian noise from grayscale images with a 
 The repository contains:
 
 * The front end RTL in SystemVerilog ([`rtl/`](rtl)), 5x5 and 3x3 statistics modes
-* A full image testbench ([`tb/`](tb))
+* A full image testbench ([`tb/`](tb)) and a bit exact golden model regression ([`tests/`](tests))
 * Block diagrams and the I/O of every block ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md))
 * A Python flow for noise injection, simulation and quality metrics, plus a GUI
 
@@ -51,7 +51,7 @@ Compared with the previous RTL, this version:
 * adds the FSM observation buses `col_state_e[2:0]` and `row_state_e[2:0]`.
 * adds three pipeline valid observation outputs: `line_buffer_valid_out`, `window_valid_out` and `stats_valid_out`.
 
-The new outputs are plain wires from existing registers, with no added flops or delay. The filter output is cycle for cycle identical to the previous RTL.
+The new outputs are plain wires from existing registers, with no added flops or delay. Interior pixels are unchanged from the previous RTL. The border fixes listed under [Verification](#verification) change a few pixels at the image edges and make `out_valid` exact.
 
 ## Repository structure
 
@@ -68,6 +68,10 @@ The new outputs are plain wires from existing registers, with no added flops or 
 │   └── wiener_core.sv          Wiener gain and output pixel
 ├── tb/
 │   └── tb_wiener_top.sv        Full image testbench (5x5 run, then 3x3 run)
+├── tests/
+│   ├── golden_model.py         Bit exact Python model of the datapath
+│   ├── tb_golden.sv            Self checking testbench
+│   └── run_golden.py           Regression: python3 tests/run_golden.py
 ├── docs/
 │   ├── ARCHITECTURE.md         Datapath, timing, formats, I/O of every block
 │   └── diagrams/               SVG block diagrams
@@ -127,19 +131,32 @@ SSIM = skimage.metrics.structural_similarity(f, f_hat)
 
 The image size is set by the `wiener_top` parameters `IMG_WIDTH` and `IMG_HEIGHT` (default 512). The testbench passes them from its `IMG_W` and `IMG_H` local parameters, so change those in `tb/tb_wiener_top.sv` together with `--size` in the Python flow.
 
-## Known issues
+## Verification
 
-These come from a cycle accurate check of every 5x5 window against the intended border rule. They affect a few pixels per frame (around 15 at 512 x 512), so the SNR barely shows them, but they are real RTL bugs.
+`tests/golden_model.py` is a bit exact Python model of the RTL fixed point arithmetic and border rule. `tests/run_golden.py` streams generated images through the RTL and compares every output pixel with the model, and also checks that each frame gives exactly IMG_WIDTH x IMG_HEIGHT outputs:
 
-1. **Row border flags are one pixel late.** The FSMs advance on `v2_valid_r`, but `vert_mux5` uses the row flags one clock earlier, together with `v2_pixel`. The first pixel of each row is mirrored with the previous row's state. Windows at x = 0, 1, 2 on rows 1, 2, H-2 and H-1 use wrong rows. In a second back to back frame, row 0 is mirrored as a bottom row.
-2. **The end of the stream is not flushed.** After the last input pixel the window stops shifting, so the last 3 output pixels of a frame repeat the last computed window.
-3. **`out_valid` stays high after a frame** until reset, because the window valid pipeline freezes at 1. The testbench hides this by capturing exactly IMG_WIDTH x IMG_HEIGHT pixels.
-4. **No idle cycles allowed inside a frame.** The line buffers shift every clock. A single idle `in_valid` cycle misaligned 62 of 64 windows in an 8 x 8 test.
-5. **Border rule differs from the Python reference.** The RTL mirrors about the window centre, while `scipy` `mode="reflect"` repeats the edge pixel.
+```bash
+python3 tests/run_golden.py
+```
+
+It covers 13 configurations: image sizes from 8 x 8 to 64 x 48 including odd sizes, both statistics modes, back to back frames, idle gaps between frames (including gaps shorter than the end of frame flush), and noise levels from almost zero up to the weight floor. All 13 pass.
+
+### Fixed bugs
+
+The golden model found three RTL bugs that the full image SNR test could not show. They are fixed in this version:
+
+1. **Row border flags were one pixel late.** The vertical mux used the row state of the previous pixel, so windows at x = 0, 1, 2 on rows 1, 2, H-2 and H-1 used wrong rows. The row flags now come from the FSM's next state.
+2. **The end of the stream was not flushed.** The last 3 pixels of a frame repeated an older window. Up to 3 dummy shifts now follow the last pixel of a frame.
+3. **`out_valid` stayed high after a frame.** It is now high for exactly one clock per output pixel.
+
+## Known limitations
+
+1. **No idle cycles inside a frame.** The line buffers shift every clock, so `in_valid` must stay high for the whole frame. Gaps between frames are fine.
+2. **Border rule differs from the Python reference.** The RTL mirrors about the window centre, while `scipy` `mode="reflect"` in `Wiener_filter.py` repeats the edge pixel. The golden model follows the RTL.
 
 ## Roadmap
 
-- [ ] Fix the known issues above and add a self checking golden model testbench
+- [ ] Allow idle cycles inside a frame (valid gated line buffers)
 - [ ] Pipeline the Wiener core divider
 - [ ] Replace the flop based line buffers with SRAM
 - [ ] Synthesis, timing and area results

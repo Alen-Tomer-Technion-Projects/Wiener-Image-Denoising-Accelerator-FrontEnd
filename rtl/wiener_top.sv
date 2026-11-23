@@ -12,7 +12,7 @@
 //   Section 2   Config shift register    24 bit noise variance, Q16.8, MSB first
 //   Section 3   Test circuits            cfg_data through an inverter / buffer
 //   Section 4   Line buffers             4 x delay_line give 5 vertical taps
-//   Section 5   Border FSMs              column and row position state machines
+//   Section 5   Border FSMs, flush       position state machines, end of frame flush
 //   Section 6   Vertical mux             top / bottom mirroring (vert_mux5)
 //   Section 7   5x5 window               sliding window (window5x5)
 //   Section 8   Horizontal mux           left / right mirroring (col_reflect_block)
@@ -25,8 +25,11 @@
 //
 // Interface rules
 //   The input stream must have no idle cycles inside a frame, because the
-//   line buffers shift every clock. mode_3x3 must be static during a frame.
-//   Load the noise variance (24 cfg_en cycles) before streaming a frame.
+//   line buffers shift every clock. Idle cycles between frames are fine,
+//   frames can also follow back to back. mode_3x3 must be static during a
+//   frame. Load the noise variance (24 cfg_en cycles) before a frame.
+//   out_valid is high for exactly one clock per output pixel, so every
+//   frame gives exactly IMG_WIDTH x IMG_HEIGHT output pixels.
 //
 // Ports
 //   Name                   Dir  Width    Description
@@ -42,8 +45,8 @@
 //   out_pixel              out  PIXEL_W  Filtered output pixel
 //   col_state_e            out  3        Column FSM state (0 L0, 1 L1, 2 MID, 3 R1, 4 R0)
 //   row_state_e            out  3        Row FSM state (0 T0, 1 T1, 2 MID, 3 B1, 4 B0)
-//   line_buffer_valid_out  out  1        Window shift strobe (v2_valid_r)
-//   window_valid_out       out  1        Valid into the statistics block
+//   line_buffer_valid_out  out  1        Real pixel shifted into the window (v2_valid_r)
+//   window_valid_out       out  1        One clock strobe per window into the statistics
 //   stats_valid_out        out  1        Valid into the Wiener core
 //   test_inv_out           out  1        ~cfg_data delayed by 3 clocks
 //   test_ff_q              out  1        cfg_data delayed by 3 clocks
@@ -221,8 +224,8 @@ module wiener_top #(
     );
 
     // The vertical mux registers its outputs, so the centre row valid is
-    // delayed by one clock to match. v2_valid_r is the window shift strobe
-    // and the enable for everything from here to the statistics block.
+    // delayed by one clock to match. v2_valid_r marks a real pixel shift
+    // into the window (see shift_en in Section 5 for the flush shifts).
     logic v2_valid_r;
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -230,12 +233,18 @@ module wiener_top #(
         else        v2_valid_r <= v2_valid;
     end
 
-    // Section 5: Border FSMs
-    // The column FSM advances once per window shift and walks
+    // Section 5: Border FSMs and window shift control
+    // The column FSM advances once per real window shift and walks
     //   L0 -> L1 -> MID (IMG_WIDTH-4 shifts) -> R1 -> R0 -> L0 ...
     // The row FSM advances once per column wrap (in R0) and walks
     //   T0 -> T1 -> MID (IMG_HEIGHT-4 rows) -> B1 -> B0 -> T0 ...
     // Suffix 0 is the outermost row / column, suffix 1 the next one in.
+    //
+    // Timing: during a shift cycle (v2_valid_r high) the registered state
+    // describes the column being shifted into the window. The vertical mux
+    // works one clock earlier, on the pixel at v2, so it uses the NEXT row
+    // state (row_state_nxt). The column flags are used three shifts later
+    // and therefore come from the registered state through a delay line.
 
     typedef enum logic [2:0] {
         COL_L0,    // 0: first column
@@ -253,28 +262,107 @@ module wiener_top #(
         ROW_B0     // 4: last row
     } row_state_t;
 
-    col_state_t  col_state;
-    row_state_t  row_state;
+    // Current state (registers) and next state (combinational)
+    col_state_t  col_state, col_state_nxt;
+    row_state_t  row_state, row_state_nxt;
 
     // Down counters, only used while the FSM is in its MID state
-    logic [15:0] col_mid_rem;
-    logic [15:0] row_mid_rem;
+    logic [15:0] col_mid_rem, col_mid_rem_nxt;
+    logic [15:0] row_mid_rem, row_mid_rem_nxt;
 
-    // Edge flags decoded from the states
+    // Edge flags. Column flags from the current state, row flags from the
+    // next state (see the timing note above).
     logic left0, left1, right1, right0;
     logic top0,  top1,  bottom1, bottom0;
 
     always_comb begin
-        left0   = (col_state == COL_L0);
-        left1   = (col_state == COL_L1);
-        right1  = (col_state == COL_R1);
-        right0  = (col_state == COL_R0);
-        top0    = (row_state == ROW_T0);
-        top1    = (row_state == ROW_T1);
-        bottom1 = (row_state == ROW_B1);
-        bottom0 = (row_state == ROW_B0);
+        left0   = (col_state     == COL_L0);
+        left1   = (col_state     == COL_L1);
+        right1  = (col_state     == COL_R1);
+        right0  = (col_state     == COL_R0);
+        top0    = (row_state_nxt == ROW_T0);
+        top1    = (row_state_nxt == ROW_T1);
+        bottom1 = (row_state_nxt == ROW_B1);
+        bottom0 = (row_state_nxt == ROW_B0);
     end
 
+    // Next state logic. Nothing changes unless a real pixel is shifted.
+    always_comb begin
+        col_state_nxt   = col_state;
+        row_state_nxt   = row_state;
+        col_mid_rem_nxt = col_mid_rem;
+        row_mid_rem_nxt = row_mid_rem;
+
+        if (v2_valid_r) begin
+            case (col_state)
+
+                COL_L0: begin
+                    col_state_nxt = COL_L1;
+                end
+
+                COL_L1: begin
+                    // Load the interior column count on entry to MID
+                    col_mid_rem_nxt = IMG_WIDTH - 16'd4;
+                    col_state_nxt   = COL_MID;
+                end
+
+                COL_MID: begin
+                    // Leave MID when the count runs out
+                    if (col_mid_rem <= 16'd1) begin
+                        col_state_nxt = COL_R1;
+                    end
+                    col_mid_rem_nxt = col_mid_rem - 16'd1;
+                end
+
+                COL_R1: begin
+                    col_state_nxt = COL_R0;
+                end
+
+                COL_R0: begin
+                    // End of a row: wrap the column FSM and advance the row FSM
+                    col_state_nxt = COL_L0;
+
+                    case (row_state)
+                        ROW_T0: begin
+                            row_state_nxt = ROW_T1;
+                        end
+
+                        ROW_T1: begin
+                            // Load the interior row count on entry to MID
+                            row_mid_rem_nxt = IMG_HEIGHT - 16'd4;
+                            row_state_nxt   = ROW_MID;
+                        end
+
+                        ROW_MID: begin
+                            if (row_mid_rem <= 16'd1) begin
+                                row_state_nxt = ROW_B1;
+                            end
+                            row_mid_rem_nxt = row_mid_rem - 16'd1;
+                        end
+
+                        ROW_B1: begin
+                            row_state_nxt = ROW_B0;
+                        end
+
+                        ROW_B0: begin
+                            // End of frame
+                            row_state_nxt = ROW_T0;
+                        end
+
+                        default: begin
+                            row_state_nxt = ROW_T0;
+                        end
+                    endcase
+                end
+
+                default: begin
+                    col_state_nxt = COL_L0;
+                end
+            endcase
+        end
+    end
+
+    // State registers
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // Reset to the top left corner of the frame
@@ -282,72 +370,37 @@ module wiener_top #(
             row_state   <= ROW_T0;
             col_mid_rem <= IMG_WIDTH  - 16'd4;
             row_mid_rem <= IMG_HEIGHT - 16'd4;
-        end else if (v2_valid_r) begin
-            case (col_state)
+        end else begin
+            col_state   <= col_state_nxt;
+            row_state   <= row_state_nxt;
+            col_mid_rem <= col_mid_rem_nxt;
+            row_mid_rem <= row_mid_rem_nxt;
+        end
+    end
 
-                COL_L0: begin
-                    col_state <= COL_L1;
-                end
+    // End of frame flush.
+    // The window centre trails the newest column by two columns, and the
+    // horizontal mux adds one more shift, so the last pixel of a frame is
+    // only processed 3 shifts after it enters the window. When the next
+    // frame follows back to back its pixels provide those shifts. Otherwise
+    // flush_shift inserts up to 3 dummy shifts while v2_valid_r is low.
+    // Dummy columns are marked invalid and never produce an output pixel.
+    logic       frame_end_shift;   // The last pixel of a frame is shifted in
+    logic [1:0] flush_cnt;         // Shifts still owed to the last frame
+    logic       flush_shift;       // Dummy shift this cycle
+    logic       shift_en;          // Window shift, real or dummy
 
-                COL_L1: begin
-                    // Load the interior column count on entry to MID
-                    col_mid_rem <= IMG_WIDTH - 16'd4;
-                    col_state   <= COL_MID;
-                end
+    assign frame_end_shift = v2_valid_r && (col_state == COL_R0) && (row_state == ROW_B0);
+    assign flush_shift     = (flush_cnt != 2'd0) && !v2_valid_r;
+    assign shift_en        = v2_valid_r || flush_shift;
 
-                COL_MID: begin
-                    // Leave MID when the count runs out
-                    if (col_mid_rem <= 16'd1) begin
-                        col_state <= COL_R1;
-                    end
-                    col_mid_rem <= col_mid_rem - 16'd1;
-                end
-
-                COL_R1: begin
-                    col_state <= COL_R0;
-                end
-
-                COL_R0: begin
-                    // End of a row: wrap the column FSM and advance the row FSM
-                    col_state <= COL_L0;
-
-                    case (row_state)
-                        ROW_T0: begin
-                            row_state <= ROW_T1;
-                        end
-
-                        ROW_T1: begin
-                            // Load the interior row count on entry to MID
-                            row_mid_rem <= IMG_HEIGHT - 16'd4;
-                            row_state   <= ROW_MID;
-                        end
-
-                        ROW_MID: begin
-                            if (row_mid_rem <= 16'd1) begin
-                                row_state <= ROW_B1;
-                            end
-                            row_mid_rem <= row_mid_rem - 16'd1;
-                        end
-
-                        ROW_B1: begin
-                            row_state <= ROW_B0;
-                        end
-
-                        ROW_B0: begin
-                            // End of frame
-                            row_state <= ROW_T0;
-                        end
-
-                        default: begin
-                            row_state <= ROW_T0;
-                        end
-                    endcase
-                end
-
-                default: begin
-                    col_state <= COL_L0;
-                end
-            endcase
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            flush_cnt <= 2'd0;
+        end else if (frame_end_shift) begin
+            flush_cnt <= 2'd3;
+        end else if (shift_en && (flush_cnt != 2'd0)) begin
+            flush_cnt <= flush_cnt - 2'd1;
         end
     end
 
@@ -376,40 +429,47 @@ module wiener_top #(
 
     // Section 7: 5x5 sliding window
 
-    logic                          win_valid_raw;      // Sticky "window filled" flag
-    logic [2:0]                    win_valid_pipe;     // 3 stage valid shift register
-    logic                          win_valid_aligned;  // Valid into the statistics block
+    logic [2:0]                    col_real_pipe;      // Real / dummy flag of the last 3 columns
+    logic                          win_valid_aligned;  // One clock strobe into the statistics block
     logic [4:0][4:0][PIXEL_W-1:0]  win;                // win[row][col]
 
     window5x5 #(.DW(PIXEL_W)) u_window (
         .clk       (clk),
         .rst_n     (rst_n),
-        .in_valid  (v2_valid_r),
+        .in_valid  (shift_en),
         .row_m2    (row_m2),
         .row_m1    (row_m1),
         .row_0     (row_0),
         .row_p1    (row_p1),
         .row_p2    (row_p2),
-        .win_shift (win_valid_raw),
+        .win_shift (),          // Sticky flag, not needed (validity is tracked per column below)
         .win       (win)
     );
 
-    // Delay the window valid by three window shifts so it lines up with the
-    // registered horizontal mux outputs.
+    // Window valid strobe.
+    // Each shift records whether the new column is a real pixel (v2_valid_r)
+    // or a flush dummy. At a shift the horizontal mux captures the window
+    // whose centre column entered three shifts earlier, so the strobe for
+    // that capture is the flag from three shifts back (col_real_pipe[2]
+    // before the update). The strobe is high for exactly one clock per
+    // real centre pixel, so out_valid is a true per pixel valid.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            win_valid_pipe <= 3'b0;
-        end else if (v2_valid_r) begin
-            win_valid_pipe <= {win_valid_pipe[1:0], win_valid_raw};
+            col_real_pipe     <= 3'b0;
+            win_valid_aligned <= 1'b0;
+        end else if (shift_en) begin
+            col_real_pipe     <= {col_real_pipe[1:0], v2_valid_r};
+            win_valid_aligned <= col_real_pipe[2];
+        end else begin
+            win_valid_aligned <= 1'b0;
         end
     end
-
-    assign win_valid_aligned = win_valid_pipe[2];
 
     // Section 8: Horizontal mux (left / right mirroring)
     // Each non centre column has a normal and a mirrored version (mirror
     // about the centre column). The column edge flags are delayed by three
-    // window shifts so they match the pixel sitting in the window centre.
+    // window shifts (real or flush) so they match the pixel in the window
+    // centre at the moment the horizontal mux captures it.
 
     logic [4:0][PIXEL_W-1:0] col_m2_norm, col_m2_refl;
     logic [4:0][PIXEL_W-1:0] col_m1_norm, col_m1_refl;
@@ -442,7 +502,7 @@ module wiener_top #(
             left0_r  <= 1'b0;  left1_r  <= 1'b0;  right1_r  <= 1'b0;  right0_r  <= 1'b0;
             left0_r2 <= 1'b0;  left1_r2 <= 1'b0;  right1_r2 <= 1'b0;  right0_r2 <= 1'b0;
             left0_r3 <= 1'b0;  left1_r3 <= 1'b0;  right1_r3 <= 1'b0;  right0_r3 <= 1'b0;
-        end else if (v2_valid_r) begin
+        end else if (shift_en) begin
             // Stage 1: sample the FSM decode
             left0_r  <= left0;     left1_r  <= left1;     right1_r  <= right1;     right0_r  <= right0;
             // Stage 2
@@ -469,7 +529,7 @@ module wiener_top #(
     col_reflect_block #(.DW(PIXEL_W)) u_col_m2 (
         .clk         (clk),
         .rst_n       (rst_n),
-        .en          (v2_valid_r),
+        .en          (shift_en),
         .sel_reflect (sel_m2),
         .normal      (col_m2_norm),
         .reflect     (col_m2_refl),
@@ -479,7 +539,7 @@ module wiener_top #(
     col_reflect_block #(.DW(PIXEL_W)) u_col_m1 (
         .clk         (clk),
         .rst_n       (rst_n),
-        .en          (v2_valid_r),
+        .en          (shift_en),
         .sel_reflect (sel_m1),
         .normal      (col_m1_norm),
         .reflect     (col_m1_refl),
@@ -489,7 +549,7 @@ module wiener_top #(
     col_reflect_block #(.DW(PIXEL_W)) u_col_p1 (
         .clk         (clk),
         .rst_n       (rst_n),
-        .en          (v2_valid_r),
+        .en          (shift_en),
         .sel_reflect (sel_p1),
         .normal      (col_p1_norm),
         .reflect     (col_p1_refl),
@@ -499,18 +559,18 @@ module wiener_top #(
     col_reflect_block #(.DW(PIXEL_W)) u_col_p2 (
         .clk         (clk),
         .rst_n       (rst_n),
-        .en          (v2_valid_r),
+        .en          (shift_en),
         .sel_reflect (sel_p2),
         .normal      (col_p2_norm),
         .reflect     (col_p2_refl),
         .out_col     (col_p2)
     );
 
-    // The centre column has no mux, it is only registered to keep the same
-    // latency as the other four columns. Note: this register has no enable.
+    // The centre column has no mux, it is only registered (with the same
+    // enable) so it stays aligned with the other four columns.
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) col_0_d <= '0;
-        else        col_0_d <= col_0;
+        if (!rst_n)        col_0_d <= '0;
+        else if (shift_en) col_0_d <= col_0;
     end
 
     // Section 9: Local statistics (mean and variance)
